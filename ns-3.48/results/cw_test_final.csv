@@ -1,0 +1,2 @@
+protocol,num_nodes,offered_load,seed,throughput_mbps_per_node,delivery_ratio,collision_rate,avg_latency_ms,fairness,crit_throughput,crit_delivery_ratio,crit_collision_rate,crit_avg_latency_ms,crit_fairness,be_throughput,be_delivery_ratio,be_collision_rate,be_avg_latency_ms,be_fairness,avg_cw_min,avg_cw_max,avg_aifsn
+GDCF,5,0.02,1,0.0061,1.0000,0.0000,1.0500,1.0000,0.0061,1.0000,0.0000,1.0500,1.0000,0.0000,0.0000,0.0000,0.0000,1.0000,15.0000,1023.0000,3.0000

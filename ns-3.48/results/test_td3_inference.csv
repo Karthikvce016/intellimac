@@ -1,0 +1,2 @@
+protocol,num_nodes,offered_load,throughput_mbps_per_node,delivery_ratio,collision_rate,avg_latency_ms,fairness
+TD3,10,0.02,0.0171,1.0000,0.0000,4.5303,1.0000

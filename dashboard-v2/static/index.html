@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NervNet — Autonomous Wireless MAC Control Center</title>
+<meta name="description" content="NervNet Real-Time RL MAC Controller & Digital Twin: Live multi-protocol simulation, interactive device web topology, and side-by-side comparison.">
+<link rel="stylesheet" href="style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= TOPBAR ================= -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">◈</div>
+      <div>
+        <h1>Nerv<span>Net</span></h1>
+        <p>Real-Time RL MAC Control · Digital Twin</p>
+      </div>
+    </div>
+
+    <!-- Main Navigation Tabs -->
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="network">⚡ Live Simulation & Web</button>
+      <button class="tab" data-tab="compare">📊 Protocol Lab Benchmark</button>
+    </nav>
+
+    <!-- Quick Run / Replay controls -->
+    <div class="controls" id="streamControls">
+      <div class="status-pill" id="globalStatusPill">
+        <span class="status-dot live-pulse"></span>
+        <span id="globalStatusText">SIMULATING LIVE</span>
+      </div>
+      <label class="ctl">
+        <span>Recorded Run</span>
+        <select id="runSelect"></select>
+      </label>
+      <button id="btnPlay" class="btn" title="Replay recorded ns-3 simulation run">▶ Replay</button>
+      <label class="ctl slim">
+        <span>Replay Speed</span>
+        <select id="speedSelect">
+          <option value="2">2×</option>
+          <option value="4" selected>4×</option>
+          <option value="8">8×</option>
+          <option value="16">16×</option>
+        </select>
+      </label>
+      <button id="btnLive" class="btn live" title="Launch ns-3 in backend and stream via WebSocket">● Live ns-3</button>
+      <div class="conn-dot" id="connDot" title="Backend Stream Status"></div>
+    </div>
+  </header>
+
+  <!-- ================= NETWORK TAB ================= -->
+  <main id="tab-network" class="tabpane active">
+
+    <!-- ===== SIMULATION CONTROLLER BAR ===== -->
+    <section class="sim-panel" id="simPanel">
+      <div class="sim-panel-top">
+        <div class="sim-title-group">
+          <div class="sim-badge">LIVE CHANNEL SIMULATOR</div>
+          <h2>Interactive Contention Engine & RL Controller</h2>
+        </div>
+
+        <div class="sim-presets">
+          <span class="preset-label">Scenarios:</span>
+          <button class="preset-btn" data-preset="light">🌱 20 Nodes (Light)</button>
+          <button class="preset-btn active" data-preset="standard">🏢 50 Nodes (MSME Factory)</button>
+          <button class="preset-btn" data-preset="heavy">💥 100 Nodes (Congested)</button>
+        </div>
+
+        <div class="sim-actions">
+          <button id="btnSimToggle" class="btn primary sim-main-btn">⏸ Pause Sim</button>
+          <button id="btnSimReset" class="btn ghost-btn" title="Reset Simulation with new seed">↺ Reset</button>
+        </div>
+      </div>
+
+      <div class="sim-controls-row">
+        <!-- Devices Slider -->
+        <div class="sim-ctrl">
+          <div class="ctrl-label-row">
+            <label>Device Count</label>
+            <span class="sim-val" id="simDevicesVal">50</span>
+          </div>
+          <div class="sim-slider-wrap">
+            <input type="range" id="simDevices" min="5" max="100" value="50" step="5" class="sim-slider">
+          </div>
+        </div>
+
+        <!-- Offered Load Slider -->
+        <div class="sim-ctrl">
+          <div class="ctrl-label-row">
+            <label>Offered Load (Traffic)</label>
+            <span class="sim-val" id="simLoadVal">0.20</span>
+          </div>
+          <div class="sim-slider-wrap">
+            <input type="range" id="simLoad" min="1" max="50" value="20" class="sim-slider">
+          </div>
+        </div>
+
+        <!-- Seed Input -->
+        <div class="sim-ctrl small">
+          <label>RNG Seed</label>
+          <input type="number" id="simSeed" value="42" min="1" max="99999" class="sim-input">
+        </div>
+
+        <!-- Protocol Mode Selector -->
+        <div class="sim-ctrl proto-group">
+          <label>Active Channel Protocol(s)</label>
+          <div class="proto-chips" id="protoChips">
+            <button class="proto-chip active sac" data-proto="SAC"><span class="chip-dot" style="background:#22d3ee"></span>SAC (Ours)</button>
+            <button class="proto-chip dcf" data-proto="DCF"><span class="chip-dot" style="background:#a855f7"></span>DCF (802.11)</button>
+            <button class="proto-chip gdcf" data-proto="GDCF"><span class="chip-dot" style="background:#f59e0b"></span>GDCF (Adaptive)</button>
+            <button class="proto-chip compare" data-proto="ALL">⚖️ Compare All 3</button>
+          </div>
+        </div>
+
+        <!-- Sim Speed -->
+        <div class="sim-ctrl small">
+          <label>Engine Speed</label>
+          <select id="simSpeed" class="sim-input select">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1.0×</option>
+            <option value="2">2.0×</option>
+            <option value="4">4.0×</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LIVE KPI SCORECARD ===== -->
+    <section class="kpirow" id="kpiRow">
+      <div class="kpi" style="--accent-c: #22d3ee">
+        <div class="kpi-head"><span class="kpi-ic">⇅</span>Network Throughput</div>
+        <div class="kpi-val"><span id="kpiThr">0.0</span><small>Mbps / node</small></div>
+        <div class="kpi-footer"><span id="kpiThrSub" class="kpi-sub">agg: 0.00 Mbps</span></div>
+      </div>
+      <div class="kpi" style="--accent-c: #4ade80">
+        <div class="kpi-head"><span class="kpi-ic">✓</span>Delivery Ratio (PDR)</div>
+        <div class="kpi-val"><span id="kpiPdr">0.0</span><small>%</small></div>
+        <div class="kpi-footer"><span id="kpiPdrSub" class="kpi-sub green">Optimal transmission</span></div>
+      </div>
+      <div class="kpi" style="--accent-c: #f87171">
+        <div class="kpi-head"><span class="kpi-ic">✖</span>Collision Rate</div>
+        <div class="kpi-val"><span id="kpiColl">0.0</span><small>%</small></div>
+        <div class="kpi-footer"><span id="kpiCollSub" class="kpi-sub">channel contention</span></div>
+      </div>
+      <div class="kpi" style="--accent-c: #f59e0b">
+        <div class="kpi-head"><span class="kpi-ic">⟳</span>Avg Contention Window</div>
+        <div class="kpi-val mono"><span id="kpiCw">0 / 0</span></div>
+        <div class="kpi-footer"><span class="kpi-sub">CWmin VO / CWmin BE</span></div>
+      </div>
+      <div class="kpi" style="--accent-c: #a78bfa">
+        <div class="kpi-head"><span class="kpi-ic">◔</span>Avg Queue Buffer</div>
+        <div class="kpi-val"><span id="kpiQueue">0</span><small>%</small></div>
+        <div class="kpi-footer"><span class="kpi-sub">device buffer load</span></div>
+      </div>
+      <div class="kpi" style="--accent-c: #38bdf8">
+        <div class="kpi-head"><span class="kpi-ic">⏱</span>Simulation Clock</div>
+        <div class="kpi-val mono"><span id="kpiClock">0.0</span><small>s</small></div>
+        <div class="kpi-footer"><span id="kpiTps" class="kpi-sub">10.0 ticks/sec</span></div>
+      </div>
+    </section>
+
+    <!-- ===== VIEW SWITCHER BAR ===== -->
+    <div class="view-header-bar" id="viewHeaderBar">
+      <div class="view-title-group">
+        <h2 id="currentViewTitle">Interactive Wireless Mesh Web</h2>
+        <span class="device-count-chip" id="deviceCountBadge">50 Devices Active</span>
+        <span class="active-proto-badge" id="activeProtoBadge">Protocol: SAC (Ours)</span>
+      </div>
+
+      <div class="view-controls-right">
+        <!-- Filter buttons for grid view -->
+        <div class="device-grid-filter" id="deviceFilter" style="display:none;">
+          <button class="filter-btn active" data-filter="all">All</button>
+          <button class="filter-btn" data-filter="active">🟢 Active</button>
+          <button class="filter-btn" data-filter="colliding">🔴 Colliding</button>
+          <button class="filter-btn" data-filter="idle">⚪ Idle</button>
+        </div>
+
+        <!-- Main View Switcher Buttons -->
+        <div class="view-toggle" id="viewToggle">
+          <button class="view-btn active" data-view="topology" title="Interactive Web of Devices">
+            <span class="v-icon">🕸️</span> Wireless Web
+          </button>
+          <button class="view-btn" data-view="grid" title="Individual Device Cards Matrix">
+            <span class="v-icon">▦</span> Device Cards
+          </button>
+          <button class="view-btn" data-view="arena" title="Side-by-Side Protocol Comparison">
+            <span class="v-icon">⚖️</span> 3-Protocol Arena
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= VIEW 1: WIRELESS WEB TOPOLOGY ================= -->
+    <section class="vizrow" id="topoView">
+      <div class="vizcard">
+        <div class="vizhead">
+          <div class="vizhead-left">
+            <span class="viz-status-dot"></span>
+            <h3>Radio Access Network · Live Telemetry Web</h3>
+          </div>
+          <div class="legend">
+            <span><i class="dot" style="background:#22d3ee; box-shadow: 0 0 6px #22d3ee"></i>AP</span>
+            <span><i class="dot" style="background:#4ade80; box-shadow: 0 0 6px #4ade80"></i>Transmitting</span>
+            <span><i class="dot" style="background:#f87171; box-shadow: 0 0 6px #f87171"></i>Collision</span>
+            <span><i class="dot" style="background:#f59e0b"></i>Backoff</span>
+            <span><i class="dot" style="background:#64748b"></i>Idle</span>
+          </div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="canvas-wrapper" id="canvasWrapper">
+          <canvas id="netCanvas"></canvas>
+          <!-- Hover Node Tooltip -->
+          <div class="node-tooltip" id="nodeTooltip">
+            <div class="tt-header">
+              <span class="tt-dot" id="ttDot"></span>
+              <strong id="ttTitle">Device #0</strong>
+              <span class="tt-badge" id="ttBadge">ACTIVE</span>
+            </div>
+            <div class="tt-grid">
+              <div><span>CW VO:</span> <b id="ttCw">64</b></div>
+              <div><span>Throughput:</span> <b id="ttThr">0.0 kbps</b></div>
+              <div><span>Collision:</span> <b id="ttColl">0.0%</b></div>
+              <div><span>Queue:</span> <b id="ttQueue">0%</b></div>
+            </div>
+            <div class="tt-hint">Click node to inspect & control</div>
+          </div>
+        </div>
+
+        <div class="vizfoot">
+          <span>💡 <b>Interactive Controls:</b> Click any device to inspect · Scroll to zoom · Hover for telemetry HUD</span>
+          <div class="canvas-zoom-tools">
+            <button class="zoom-btn" id="btnZoomIn" title="Zoom In">+</button>
+            <button class="zoom-btn" id="btnZoomReset" title="Reset View">1:1</button>
+            <button class="zoom-btn" id="btnZoomOut" title="Zoom Out">−</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Device Inspector Sidebar -->
+      <aside class="detailcard" id="detailCard">
+        <div class="empty" id="detailEmpty">
+          <div class="empty-ic">🎯</div>
+          <h3>Device Inspector</h3>
+          <p>Click any node on the wireless web or card in the grid to inspect its live contention window, buffer state, and inject test traffic.</p>
+          <button class="btn ghost-btn small" id="btnSelectRandom">Inspect Node #0</button>
+        </div>
+
+        <div class="detail" id="detailBody" hidden>
+          <div class="detail-head">
+            <div class="d-title-group">
+              <span class="dev-status-indicator" id="dStatusDot"></span>
+              <div>
+                <h3 id="dTitle">Device 0</h3>
+                <p id="dSub">802.11 STA · SAC Controller</p>
+              </div>
+            </div>
+            <button class="btn ghost-close" id="dClose" title="Close Inspector">✕</button>
+          </div>
+
+          <!-- Interactive Action Buttons for this Device -->
+          <div class="dev-actions-box">
+            <button class="btn burst-btn" id="btnInjectBurst" title="Inject an instant burst of 20 packets into this device queue">
+              🔥 Trigger Traffic Burst
+            </button>
+          </div>
+
+          <!-- Live Metrics Grid -->
+          <div class="d-grid" id="dGrid"></div>
+
+          <!-- Live Charts -->
+          <div class="d-chart">
+            <div class="d-chart-head">
+              <h4>Contention Window Adaptation (VO / BE)</h4>
+              <span class="d-chart-legend"><i style="background:#22d3ee"></i>VO <i style="background:#f59e0b"></i>BE</span>
+            </div>
+            <svg id="dCwChart"></svg>
+          </div>
+
+          <div class="d-chart">
+            <div class="d-chart-head">
+              <h4>Instantaneous Throughput (kbps)</h4>
+              <span class="d-chart-val" id="dThrCur">—</span>
+            </div>
+            <svg id="dThrChart"></svg>
+          </div>
+
+          <div class="d-chart">
+            <div class="d-chart-head">
+              <h4>Collision Probability (%)</h4>
+              <span class="d-chart-val" id="dCollCur">—</span>
+            </div>
+            <svg id="dCollChart"></svg>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ================= VIEW 2: DEVICE CARDS GRID ================= -->
+    <section class="device-grid-section hidden" id="gridView">
+      <div class="device-grid" id="deviceGrid"></div>
+    </section>
+
+    <!-- ================= VIEW 3: 3-PROTOCOL ARENA (SIDE-BY-SIDE) ================= -->
+    <section class="arena-section hidden" id="arenaView">
+      <div class="arena-header">
+        <div>
+          <h3>Simultaneous Tri-Protocol Arena</h3>
+          <p>Running SAC, DCF, and GDCF in parallel with identical packet arrival seeds and channel parameters</p>
+        </div>
+        <div class="arena-badge-group">
+          <span class="arena-badge">Deterministic Sync: 100%</span>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Network Cards -->
+      <div class="arena-grid" id="arenaGrid">
+        <!-- SAC Panel -->
+        <div class="arena-card sac-theme" id="arenaCardSAC">
+          <div class="ac-head">
+            <div class="ac-title">
+              <span class="ac-dot" style="background:#22d3ee"></span>
+              <h4>SAC (Ours)</h4>
+            </div>
+            <span class="ac-tag">RL Dynamic CW</span>
+          </div>
+          <div class="ac-kpi-row">
+            <div class="ac-kpi"><label>Throughput</label><b id="acThrSAC">0.0 kbps</b></div>
+            <div class="ac-kpi"><label>Collision</label><b id="acCollSAC">0.0%</b></div>
+            <div class="ac-kpi"><label>PDR</label><b id="acPdrSAC">0.0%</b></div>
+            <div class="ac-kpi"><label>Avg CW</label><b id="acCwSAC">0</b></div>
+          </div>
+          <div class="ac-canvas-wrap">
+            <canvas id="arenaCanvasSAC" class="arena-mini-canvas"></canvas>
+          </div>
+          <div class="ac-chart-wrap">
+            <svg id="arenaChartSAC"></svg>
+          </div>
+        </div>
+
+        <!-- DCF Panel -->
+        <div class="arena-card dcf-theme" id="arenaCardDCF">
+          <div class="ac-head">
+            <div class="ac-title">
+              <span class="ac-dot" style="background:#94a3b8"></span>
+              <h4>DCF (802.11)</h4>
+            </div>
+            <span class="ac-tag">Binary Exp Backoff</span>
+          </div>
+          <div class="ac-kpi-row">
+            <div class="ac-kpi"><label>Throughput</label><b id="acThrDCF">0.0 kbps</b></div>
+            <div class="ac-kpi"><label>Collision</label><b id="acCollDCF">0.0%</b></div>
+            <div class="ac-kpi"><label>PDR</label><b id="acPdrDCF">0.0%</b></div>
+            <div class="ac-kpi"><label>Avg CW</label><b id="acCwDCF">0</b></div>
+          </div>
+          <div class="ac-canvas-wrap">
+            <canvas id="arenaCanvasDCF" class="arena-mini-canvas"></canvas>
+          </div>
+          <div class="ac-chart-wrap">
+            <svg id="arenaChartDCF"></svg>
+          </div>
+        </div>
+
+        <!-- GDCF Panel -->
+        <div class="arena-card gdcf-theme" id="arenaCardGDCF">
+          <div class="ac-head">
+            <div class="ac-title">
+              <span class="ac-dot" style="background:#f59e0b"></span>
+              <h4>GDCF</h4>
+            </div>
+            <span class="ac-tag">Heuristic Adaptive</span>
+          </div>
+          <div class="ac-kpi-row">
+            <div class="ac-kpi"><label>Throughput</label><b id="acThrGDCF">0.0 kbps</b></div>
+            <div class="ac-kpi"><label>Collision</label><b id="acCollGDCF">0.0%</b></div>
+            <div class="ac-kpi"><label>PDR</label><b id="acPdrGDCF">0.0%</b></div>
+            <div class="ac-kpi"><label>Avg CW</label><b id="acCwGDCF">0</b></div>
+          </div>
+          <div class="ac-canvas-wrap">
+            <canvas id="arenaCanvasGDCF" class="arena-mini-canvas"></canvas>
+          </div>
+          <div class="ac-chart-wrap">
+            <svg id="arenaChartGDCF"></svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tri-Protocol Overlaid Live Scope Charts -->
+      <div class="arena-charts-row">
+        <div class="chartcard">
+          <div class="chart-header-row">
+            <h2>Throughput Over Time <small>(kbps / node)</small></h2>
+            <div class="legend-items">
+              <span style="color:#22d3ee">■ SAC</span>
+              <span style="color:#a855f7">■ DCF</span>
+              <span style="color:#f59e0b">■ GDCF</span>
+            </div>
+          </div>
+          <svg id="arenaOverlayThr"></svg>
+        </div>
+        <div class="chartcard">
+          <div class="chartheader-row">
+            <h2>Collision Rate Over Time <small>(%)</small></h2>
+            <div class="legend-items">
+              <span style="color:#22d3ee">■ SAC</span>
+              <span style="color:#a855f7">■ DCF</span>
+              <span style="color:#f59e0b">■ GDCF</span>
+            </div>
+          </div>
+          <svg id="arenaOverlayColl"></svg>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== AGGREGATE REAL-TIME TIME-SERIES CHARTS ===== -->
+    <section class="chartrow" id="liveChartRow">
+      <div class="chartcard">
+        <div class="chart-header-row">
+          <h2>Live Aggregate Throughput <small>kbps / node</small></h2>
+          <div class="legend-items">
+            <span style="color:#22d3ee">■ SAC (Ours)</span>
+            <span style="color:#a855f7">■ DCF</span>
+            <span style="color:#f59e0b">■ GDCF</span>
+          </div>
+        </div>
+        <svg id="liveThrChart"></svg>
+      </div>
+      <div class="chartcard">
+        <div class="chart-header-row">
+          <h2>Network Collision Rate <small>% packet drops & retries</small></h2>
+          <div class="legend-items">
+            <span style="color:#22d3ee">■ SAC (Ours)</span>
+            <span style="color:#a855f7">■ DCF</span>
+            <span style="color:#f59e0b">■ GDCF</span>
+          </div>
+        </div>
+        <svg id="liveCollChart"></svg>
+      </div>
+    </section>
+
+    <!-- Live ns-3 Engine Log output -->
+    <section class="logrow" id="logRow" hidden>
+      <div class="chartcard">
+        <h2>ns-3 Digital Twin Engine Log</h2>
+        <pre id="engineLog"></pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= COMPARE TAB (PROTOCOL LAB) ================= -->
+  <main id="tab-compare" class="tabpane">
+    <section class="kpirow" id="cmpHero"></section>
+    <section class="cmpgrid">
+      <div class="chartcard"><h2>Throughput <small>Mbps / node</small></h2><svg id="cmpThr"></svg></div>
+      <div class="chartcard"><h2>Delivery ratio <small>%</small></h2><svg id="cmpPdr"></svg></div>
+      <div class="chartcard"><h2>Collision rate <small>%</small></h2><svg id="cmpColl"></svg></div>
+      <div class="chartcard"><h2>Latency <small>ms</small></h2><svg id="cmpLat"></svg></div>
+    </section>
+    <section class="cmpgrid">
+      <div class="chartcard wide"><h2>VO (critical) vs BE (background) — per traffic class</h2><svg id="cmpClass"></svg></div>
+    </section>
+    <section class="chartcard tablewrap">
+      <h2>Full ns-3 Benchmark Results Matrix</h2>
+      <div class="tablescroll"><table id="cmpTable"></table></div>
+    </section>
+  </main>
+
+  <!-- ================= FOOTER ================= -->
+  <footer>
+    <div class="footer-left">
+      <span>◈ <b>NervNet SAC MAC Controller</b> · Real-Time Wireless Slotted Channel Simulator & ns-3 Digital Twin</span>
+    </div>
+    <div class="footer-right">
+      <span class="mono" id="footerStatus">Engine Online</span>
+    </div>
+  </footer>
+</div>
+
+<!-- Scripts -->
+<script src="simulator.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

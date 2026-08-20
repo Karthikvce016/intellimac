@@ -1,0 +1,4 @@
+protocol,num_nodes,offered_load,seed,throughput_mbps_per_node,delivery_ratio,collision_rate,avg_latency_ms,fairness,crit_throughput,crit_delivery_ratio,crit_collision_rate,crit_avg_latency_ms,crit_fairness,be_throughput,be_delivery_ratio,be_collision_rate,be_avg_latency_ms,be_fairness,avg_cw_min,avg_cw_max,avg_aifsn,avg_cw_min_vo,avg_cw_max_vo,avg_cw_min_be,avg_cw_max_be
+SAC,50,0.2,42,0.0389,0.9999,0.0001,6.5501,0.9999,0.0238,1.0000,0.0000,6.7792,1.0000,0.0150,0.9989,0.0011,2.2139,0.9989,31.0000,127.0000,3.0000,1023.0000,1023.0000,31.0000,127.0000
+DCF,50,0.2000,42,0.0347,0.9842,0.0158,6.5926,0.9844,0.0234,0.9840,0.0160,6.7988,0.9843,0.0113,0.9886,0.0114,1.4758,0.9887,15.0000,1023.0000,3.0000,3.0000,7.0000,15.0000,1023.0000
+GDCF,50,0.2000,42,0.0537,0.9958,0.0042,6.3343,0.9958,0.0237,0.9959,0.0041,6.8158,0.9959,0.0300,0.9951,0.0049,1.7819,0.9952,15.0000,1023.0000,3.0000,0.0000,0.0000,0.0000,0.0000
