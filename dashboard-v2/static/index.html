@@ -207,9 +207,9 @@
           <div class="legend">
             <span><i class="dot" style="background:#22d3ee; box-shadow: 0 0 6px #22d3ee"></i>AP</span>
             <span><i class="dot" style="background:#4ade80; box-shadow: 0 0 6px #4ade80"></i>Transmitting</span>
+            <span><i class="dot" style="background:#22d3ee"></i>Connected</span>
             <span><i class="dot" style="background:#f87171; box-shadow: 0 0 6px #f87171"></i>Collision</span>
-            <span><i class="dot" style="background:#f59e0b"></i>Backoff</span>
-            <span><i class="dot" style="background:#64748b"></i>Idle</span>
+            <span><i class="dot" style="background:#475569"></i>Idle / Muted</span>
           </div>
         </div>
 
@@ -266,8 +266,11 @@
 
           <!-- Interactive Action Buttons for this Device -->
           <div class="dev-actions-box">
-            <button class="btn burst-btn" id="btnInjectBurst" title="Inject an instant burst of 20 packets into this device queue">
-              🔥 Trigger Traffic Burst
+            <button class="btn burst-btn" id="btnInjectBurst" title="Inject a surge of 50 packets into this device queue">
+              🔥 Trigger Traffic Surge
+            </button>
+            <button class="btn mute-btn" id="btnToggleMute" title="Toggle node active or idle/muted (cut off traffic)">
+              💤 Force Node Idle
             </button>
           </div>
 

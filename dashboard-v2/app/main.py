@@ -26,8 +26,9 @@ from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent          # dashboard-v2/
 REPO = ROOT.parent                                     # repo root
-RESULTS = REPO / "ns-3.48" / "results"
-NS3_BINARY = REPO / "ns-3.48" / "build" / "scratch" / "ns3.48-msme_mac_comparison_v2-default"
+NS3_DIR = REPO / "ns-3.48"                            # ns-3 root (has results/ subdir)
+RESULTS = NS3_DIR / "results"
+NS3_BINARY = NS3_DIR / "build" / "scratch" / "ns3.48-msme_mac_comparison_v2-default"
 SAC_WEIGHTS = REPO / "results" / "models" / "sac_as_td3_weights.json"
 
 PROTO_ORDER = ["SAC", "DCF", "GDCF", "TD3", "GDCF_ORIG"]
@@ -288,6 +289,7 @@ async def stream_live(ws: WebSocket, nodes: int, load: float, sim_time: float, p
     procs = {}
 
     async def worker(p: str):
+        live_output = str(RESULTS / f"dash_live_{p}.csv")
         cmd = [
             str(NS3_BINARY),
             f"--protocols={p}",
@@ -296,13 +298,13 @@ async def stream_live(ws: WebSocket, nodes: int, load: float, sim_time: float, p
             f"--simTime={sim_time}",
             "--nSeeds=1",
             "--seed=42",
-            "--perDeviceCsv=true",
+            "--perDeviceCsv=false",
             "--liveStream=true",
             f"--sacWeights={SAC_WEIGHTS}",
-            f"--output=results/dash_live_{p}.csv",
+            f"--output={live_output}",
         ]
         proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=str(NS3_BINARY.parent.parent),
+            *cmd, cwd=str(NS3_DIR),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         procs[p] = proc
 
@@ -369,7 +371,7 @@ async def stream_live(ws: WebSocket, nodes: int, load: float, sim_time: float, p
 
     worker_tasks = [asyncio.create_task(worker(p)) for p in protocols_to_run]
 
-    # Dispatcher: send frames as they arrive from each protocol queue
+    # Dispatcher: send frames as they arrive with smooth ~25fps pacing (40ms interval)
     try:
         while not all(done_events[p].is_set() and queues[p].empty() for p in protocols_to_run):
             dispatched = False
@@ -380,12 +382,15 @@ async def stream_live(ws: WebSocket, nodes: int, load: float, sim_time: float, p
                     dispatched = True
                 elif not done_events[p].is_set():
                     try:
-                        frame = await asyncio.wait_for(queues[p].get(), timeout=0.03)
+                        frame = await asyncio.wait_for(queues[p].get(), timeout=0.02)
                         await ws.send_json(frame)
                         dispatched = True
                     except asyncio.TimeoutError:
                         pass
-            if not dispatched:
+            if dispatched:
+                # Smooth 25fps clock pacing prevents browser WebSocket message storms
+                await asyncio.sleep(0.035)
+            else:
                 await asyncio.sleep(0.01)
     finally:
         for p, proc in procs.items():

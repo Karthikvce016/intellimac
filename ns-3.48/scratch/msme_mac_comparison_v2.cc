@@ -503,6 +503,16 @@ private:
 };
 
 // ============================================================
+// Free helper: snap any integer to the nearest valid 2^n-1 CW value
+// ============================================================
+static inline uint32_t SnapToValidCw(uint32_t cw)
+{
+    uint32_t v = 1;
+    while (v < cw) v = (v << 1) | 1;
+    return std::min(v, 1023u);
+}
+
+// ============================================================
 // SAC MAC Controller with Real-time Metrics (Per-Class: AC_VO + AC_BE)
 // ============================================================
 class LocalTd3MacController
@@ -534,12 +544,7 @@ public:
     uint8_t GetCurrentAifsnBe() const { return m_txopBe ? m_txopBe->GetAifsn() : 0; }
 
 private:
-    static uint32_t SnapToValidCw(uint32_t cw)
-    {
-        uint32_t v = 1;
-        while (v < cw) v = (v << 1) | 1;
-        return std::min(v, 1023u);
-    }
+    // SnapToValidCw is now a free function above
 
     void ScheduleInference()
     {
@@ -714,13 +719,13 @@ private:
 
         if (ratio > 1.2)
         {
-            m_cwMin = std::min(m_cwMax, static_cast<uint32_t>(m_cwMin * 1.5));
-            m_cwMax = std::min(m_maxCwMax, static_cast<uint32_t>(m_cwMax * 1.2));
+            m_cwMin = SnapToValidCw(std::min(m_cwMax, static_cast<uint32_t>(m_cwMin * 1.5)));
+            m_cwMax = SnapToValidCw(std::min(m_maxCwMax, static_cast<uint32_t>(m_cwMax * 1.2)));
         }
         else if (ratio < 0.8 && m_cwMin > m_minCwMin)
         {
-            m_cwMin = std::max(m_minCwMin, static_cast<uint32_t>(m_cwMin * 0.75));
-            m_cwMax = std::max(m_cwMin, static_cast<uint32_t>(m_cwMax * 0.9));
+            m_cwMin = SnapToValidCw(std::max(m_minCwMin, static_cast<uint32_t>(m_cwMin * 0.75)));
+            m_cwMax = SnapToValidCw(std::max(m_cwMin, static_cast<uint32_t>(m_cwMax * 0.9)));
         }
 
         if (m_txop)
@@ -791,13 +796,13 @@ private:
 
         if (ratio > 1.2)
         {
-            m_cwMin = std::min(m_cwMax, static_cast<uint32_t>(m_cwMin * 1.5));
-            m_cwMax = std::min(m_maxCwMax, static_cast<uint32_t>(m_cwMax * 1.2));
+            m_cwMin = SnapToValidCw(std::min(m_cwMax, static_cast<uint32_t>(m_cwMin * 1.5)));
+            m_cwMax = SnapToValidCw(std::min(m_maxCwMax, static_cast<uint32_t>(m_cwMax * 1.2)));
         }
         else if (ratio < 0.8 && m_cwMin > m_minCwMin)
         {
-            m_cwMin = std::max(m_minCwMin, static_cast<uint32_t>(m_cwMin * 0.75));
-            m_cwMax = std::max(m_cwMin, static_cast<uint32_t>(m_cwMax * 0.9));
+            m_cwMin = SnapToValidCw(std::max(m_minCwMin, static_cast<uint32_t>(m_cwMin * 0.75)));
+            m_cwMax = SnapToValidCw(std::max(m_cwMin, static_cast<uint32_t>(m_cwMax * 0.9)));
         }
 
         if (m_txop)

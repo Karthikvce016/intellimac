@@ -27,6 +27,14 @@ function poissonRand(rng, lambda) {
   return k - 1;
 }
 
+// ========================= CW SNAP HELPER =========================
+// Mirrors C++ SnapToValidCw exactly: snaps up to nearest 2^n-1 value
+function snapToValidCw(cw) {
+  let v = 1;
+  while (v < cw) v = (v << 1) | 1;
+  return Math.min(v, 1023);
+}
+
 // ========================= NEURAL NETWORK INFERENCE =========================
 class NeuralNet {
   constructor(w) {
@@ -67,7 +75,10 @@ class Device {
   constructor(id, loadMult) {
     this.id = id;
     this.loadMult = loadMult || 1.0;
-    this.cwMinVo = 15; this.cwMinBe = 31;
+    this.baseLoadMult = this.loadMult;
+    this.isMuted = false;
+    this.cwMinVo = 15; this.cwMaxVo = 31;  // track max for mult obs
+    this.cwMinBe = 31; this.cwMaxBe = 127; // track max for mult obs
     this.aifsnVo = 2; this.aifsnBe = 3;
     this.activeCw = 15;
     this.backoff = 0;
@@ -78,7 +89,7 @@ class Device {
     this.deliveryRatio = 1.0;  // fraction 0..1
     this.queueOcc = 0;         // fraction 0..1
     this.loadEstimate = 0;
-    this.state = 'idle';       // 'idle' | 'active' | 'colliding'
+    this.state = 'idle';       // 'idle' | 'active' | 'colliding' | 'muted'
   }
 }
 
@@ -106,7 +117,7 @@ const Strategies = {
   },
   SAC: {
     label: 'SAC (Ours)', color: '#22d3ee', net: null,
-    init(d) { d.cwMinVo = 64; d.cwMinBe = 64; d.activeCw = 64; },
+    init(d) { d.cwMinVo = 63; d.cwMinBe = 127; d.activeCw = 63; },
     update(d) {
       if (!this.net) {
         const target = 32 + d.collisionRate * 850 + d.loadEstimate * 300 + d.queueOcc * 200;
@@ -115,24 +126,35 @@ const Strategies = {
         d.activeCw = d.cwMinVo;
         return;
       }
+      // Observation exactly matches training (train_sac.py) and C++ (GetObservationWithVO)
+      const multVo = (d.cwMaxVo || d.cwMinVo * 2) / Math.max(1, d.cwMinVo);
+      const multBe = (d.cwMaxBe || d.cwMinBe * 2) / Math.max(1, d.cwMinBe);
       const obs = [
-        Math.min(d.loadEstimate, 1.0),
-        Math.min(d.collisionRate, 1.0),
-        Math.min(d.deliveryRatio, 1.0),
-        Math.min(d.throughput / 0.025, 1.0),
-        Math.min(d.queueOcc, 1.0),
-        (d.cwMinVo - CW_MIN) / (CW_MAX - CW_MIN),
-        (d.cwMinBe - CW_MIN) / (CW_MAX - CW_MIN),
-        (d.aifsnVo - 1) / 6,
-        (d.aifsnBe - 1) / 6,
+        Math.min(d.loadEstimate, 1.0),                          // slot 0: load
+        Math.min(d.collisionRate, 1.0),                         // slot 1: collision_rate
+        Math.min(d.deliveryRatio, 1.0),                         // slot 2: delivery_ratio
+        Math.min(d.collisionRate * 10.0, 1.0),                  // slot 3: latency_norm
+        Math.min(d.queueOcc, 1.0),                              // slot 4: queue_occ
+        (d.cwMinVo - 3.0) / (1023.0 - 3.0),                   // slot 5: cw_min_vo_norm
+        (d.cwMinBe - 16.0) / (1024.0 - 16.0),                 // slot 6: cw_min_be_norm
+        Math.min(1.0, Math.max(0.0, (multVo - 1.0) / 3.0)),    // slot 7: mult_vo_norm
+        Math.min(1.0, Math.max(0.0, (multBe - 1.0) / 3.0)),    // slot 8: mult_be_norm
       ];
       const a = this.net.forward(obs);
-      d.cwMinVo = Math.round(CW_MIN + (a[0] + 1) / 2 * (CW_MAX - CW_MIN));
-      d.cwMinBe = Math.round(CW_MIN + (a[1] + 1) / 2 * (CW_MAX - CW_MIN));
-      d.aifsnVo = Math.round(Math.max(1, Math.min(7, 1 + (a[2] + 1) / 2 * 6)));
-      d.aifsnBe = Math.round(Math.max(1, Math.min(7, 1 + (a[3] + 1) / 2 * 6)));
-      d.cwMinVo = Math.max(CW_MIN, Math.min(CW_MAX, d.cwMinVo));
-      d.cwMinBe = Math.max(CW_MIN, Math.min(CW_MAX, d.cwMinBe));
+      // Decode action[0] → VO CWmin using same grid as training + C++
+      const critGrid = [3, 7, 15, 31, 63, 127, 255, 511, 1023];
+      const beGrid   = [15, 31, 63, 127, 255, 511, 1023];
+      const critIdx = Math.max(0, Math.min(8, Math.floor((a[0] + 1.0) * 0.5 * 8.0 + 0.5)));
+      d.cwMinVo = critGrid[critIdx];
+      const voMult = 1.0 + (a[1] + 1.0) * 0.5 * 3.0;
+      d.cwMaxVo = snapToValidCw(Math.round(d.cwMinVo * voMult));
+      d.cwMaxVo = Math.max(d.cwMaxVo, d.cwMinVo);
+      // Decode action[2] → BE CWmin
+      const beIdx = Math.max(0, Math.min(6, Math.floor((a[2] + 1.0) * 0.5 * 6.0 + 0.5)));
+      d.cwMinBe = beGrid[beIdx];
+      const beMult = 1.0 + (a[3] + 1.0) * 0.5 * 3.0;
+      d.cwMaxBe = snapToValidCw(Math.round(d.cwMinBe * beMult));
+      d.cwMaxBe = Math.max(d.cwMaxBe, d.cwMinBe);
       d.activeCw = d.cwMinVo;
     }
   },
@@ -164,9 +186,30 @@ class MACSimulator {
   injectBurst(nodeId, packetCount) {
     const d = this.devices.find(x => x.id === nodeId);
     if (d) {
-      d.queue = Math.min(d.queue + (packetCount || 20), MAX_QUEUE);
-      d.loadMult = 2.5;
+      d.isMuted = false;
+      d.queue = Math.min(d.queue + (packetCount || 50), MAX_QUEUE);
+      d.loadMult = 4.5;
+      d.state = 'active';
     }
+  }
+
+  toggleMute(nodeId) {
+    const d = this.devices.find(x => x.id === nodeId);
+    if (d) {
+      d.isMuted = !d.isMuted;
+      if (d.isMuted) {
+        d.queue = 0;
+        d.loadMult = 0;
+        d.state = 'muted';
+        d.throughput = 0;
+        d.collisionRate = 0;
+      } else {
+        d.loadMult = d.baseLoadMult || 1.0;
+        d.state = 'idle';
+      }
+      return d.isMuted;
+    }
+    return false;
   }
 
   tick() {
@@ -177,9 +220,19 @@ class MACSimulator {
 
     // 1. Packet Arrivals
     for (const d of this.devices) {
+      if (d.isMuted) {
+        d._gen = 0;
+        d.queue = 0;
+        d.state = 'muted';
+        continue;
+      }
       const g = poissonRand(rng, baseArrivals * d.loadMult);
       d._gen = g;
       d.queue = Math.min(d.queue + g, MAX_QUEUE);
+      // Gracefully decay burst load multiplier over ~15 ticks back to base
+      if (d.loadMult > (d.baseLoadMult || 1.0)) {
+        d.loadMult = Math.max(d.baseLoadMult || 1.0, d.loadMult * 0.94);
+      }
     }
 
     // 2. Slotted Contention
@@ -240,7 +293,8 @@ class MACSimulator {
       protocol: this.proto,
       devices: this.devices.map(d => ({
         id: d.id,
-        state: d.state,
+        state: d.isMuted ? 'muted' : d.state,
+        isMuted: !!d.isMuted,
         cw_vo: d.cwMinVo,
         cw_be: d.cwMinBe,
         aifsn_vo: d.aifsnVo,
@@ -265,6 +319,14 @@ class SimulationRunner {
     this.onFrame = null;
     this.neuralNet = null;
     this.speed = 1.0;
+  }
+
+  toggleMute(nodeId) {
+    let muted = false;
+    for (const [, sim] of this.sims) {
+      muted = sim.toggleMute(nodeId);
+    }
+    return muted;
   }
 
   async loadWeights(modelName) {

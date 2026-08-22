@@ -158,9 +158,43 @@ function setupNavigation() {
   const btnBurst = $('btnInjectBurst');
   if (btnBurst) {
     btnBurst.onclick = () => {
-      if (state.selected !== null && state.sim.runner) {
-        state.sim.runner.injectBurst(state.selected, 25);
+      if (state.selected !== null) {
+        if (state.sim.runner) {
+          state.sim.runner.injectBurst(state.selected, 60);
+        }
+        // Force local state to active immediately so UI feedback is instantaneous
+        const d = state.devices.get(state.selected);
+        if (d) {
+          d.isMuted = false;
+          d.state = 'active';
+          d.queue_occ = 0.85;
+          d.throughput = 0.045;
+        }
         pulseEffect(state.selected);
+        selectDevice(state.selected);
+      }
+    };
+  }
+
+  const btnMute = $('btnToggleMute');
+  if (btnMute) {
+    btnMute.onclick = () => {
+      if (state.selected !== null) {
+        let isMuted = false;
+        if (state.sim.runner) {
+          isMuted = state.sim.runner.toggleMute(state.selected);
+        }
+        const d = state.devices.get(state.selected);
+        if (d) {
+          d.isMuted = isMuted;
+          d.state = isMuted ? 'muted' : 'idle';
+          if (isMuted) {
+            d.queue_occ = 0;
+            d.throughput = 0;
+            d.collision = 0;
+          }
+        }
+        renderDetail(state.selected, d);
       }
     };
   }
@@ -204,6 +238,8 @@ function setupControls() {
 
   devSlider.oninput = () => {
     $('simDevicesVal').textContent = devSlider.value;
+    const badge = $('deviceCountBadge');
+    if (badge) badge.textContent = `${devSlider.value} Devices Active`;
     state.sim.deviceCount = +devSlider.value;
     updateTopologyAndRestart();
   };
@@ -392,6 +428,14 @@ function onSimFrame(proto, frame) {
           load_estimate: d.load_estimate
         });
         if (h.length > 250) h.shift();
+
+        // Track real-time device transmission activity for vibrant visual state
+        if (d.throughput > 0.0001 || d.collision > 0.01 || d.queue_occ > 0.005 || d.state === 'active') {
+          nodeActivityMap.set(d.id, {
+            lastTx: performance.now(),
+            isCollision: d.collision > 0.04 || d.state === 'colliding'
+          });
+        }
       }
 
       updateScorecard(ds, frame.t);
@@ -410,6 +454,8 @@ function onSimFrame(proto, frame) {
     console.error('Frame processing error:', err);
   }
 }
+
+let _lastChartRenderTime = 0;
 
 function updateScorecard(ds, t) {
   if (!ds || !ds.length) return;
@@ -437,28 +483,56 @@ function updateScorecard(ds, t) {
   state.history.push({ t, thr: thrAvg, coll: collAvg });
   if (state.history.length > 400) state.history.shift();
 
+  // Throttle live SVG charts to ~20fps (50ms interval) to completely prevent browser lag
+  const now = performance.now();
+  if (now - _lastChartRenderTime < 48) return;
+  _lastChartRenderTime = now;
+
   if (state.currentView !== 'arena') {
     const thrSeries = [], collSeries = [];
+    const protoStyles = {
+      SAC: { dash: '', width: 2.8, glow: true },
+      DCF: { dash: '6 3', width: 2.0, glow: false },
+      GDCF: { dash: '2 3', width: 2.0, glow: false }
+    };
+
     for (const proto of ['SAC', 'DCF', 'GDCF']) {
       const pd = state.sim.perProto.get(proto);
       const color = PROTO_COLORS[proto] || '#94a3b8';
+      const st = protoStyles[proto] || { dash: '', width: 2.0 };
       if (pd && pd.history.length >= 2) {
-        thrSeries.push({ name: proto, color, pts: pd.history.map(h => [h.t, h.thr * 1000]), fill: proto === state.activeProto });
-        collSeries.push({ name: proto, color, pts: pd.history.map(h => [h.t, h.coll * 100]), fill: proto === state.activeProto });
+        thrSeries.push({
+          name: proto,
+          color,
+          pts: pd.history.map(h => [h.t, h.thr * 1000]),
+          fill: proto === state.activeProto,
+          dash: st.dash,
+          strokeWidth: st.width,
+          glow: st.glow
+        });
+        collSeries.push({
+          name: proto,
+          color,
+          pts: pd.history.map(h => [h.t, h.coll * 100]),
+          fill: proto === state.activeProto,
+          dash: st.dash,
+          strokeWidth: st.width,
+          glow: st.glow
+        });
       }
     }
     if (thrSeries.length > 0) {
-      lineChart($('liveThrChart'), thrSeries, { yLabel: v => v.toFixed(0) });
+      lineChart($('liveThrChart'), thrSeries, { yLabel: v => v.toFixed(0), title: 'Throughput' });
     } else {
       lineChart($('liveThrChart'), [
-        { name: 'Throughput', color: '#22d3ee', pts: state.history.map(h => [h.t, h.thr * 1000]), fill: true }
+        { name: 'Throughput', color: '#22d3ee', pts: state.history.map(h => [h.t, h.thr * 1000]), fill: true, strokeWidth: 2.5 }
       ], { yLabel: v => v.toFixed(0) });
     }
     if (collSeries.length > 0) {
-      lineChart($('liveCollChart'), collSeries, { yLabel: v => v.toFixed(1) });
+      lineChart($('liveCollChart'), collSeries, { yLabel: v => v.toFixed(1), title: 'Collisions' });
     } else {
       lineChart($('liveCollChart'), [
-        { name: 'Collisions', color: '#f87171', pts: state.history.map(h => [h.t, h.coll * 100]), fill: true }
+        { name: 'Collisions', color: '#f87171', pts: state.history.map(h => [h.t, h.coll * 100]), fill: true, strokeWidth: 2.5 }
       ], { yLabel: v => v.toFixed(1) });
     }
   }
@@ -554,13 +628,24 @@ function computeNodeLayout(W, H) {
   const baseRadius = Math.min(W * 0.42, H * 0.40) * zoom;
 
   nodePx = [];
-  for (let i = 0; i < n; i++) {
-    const ring = i < 15 ? 1 : i < 40 ? 2 : 3;
-    const ringRadius = baseRadius * (ring === 1 ? 0.38 : ring === 2 ? 0.68 : 0.98);
-    const countInRing = ring === 1 ? 15 : ring === 2 ? 25 : Math.max(1, n - 40);
-    const ringIdx = ring === 1 ? i : ring === 2 ? (i - 15) : (i - 40);
-    const angle = (ringIdx / countInRing) * 2 * Math.PI + (ring * 0.25);
+  // Dynamic multi-ring layout (up to 100+ nodes)
+  const ring1Cap = Math.min(15, Math.ceil(n * 0.22));
+  const ring2Cap = Math.min(25, Math.ceil(n * 0.35));
+  const ring3Cap = Math.min(35, Math.ceil(n * 0.30));
 
+  for (let i = 0; i < n; i++) {
+    let ring, ringRadius, countInRing, ringIdx;
+    if (i < ring1Cap) {
+      ring = 1; ringRadius = baseRadius * 0.32; countInRing = ring1Cap; ringIdx = i;
+    } else if (i < ring1Cap + ring2Cap) {
+      ring = 2; ringRadius = baseRadius * 0.58; countInRing = ring2Cap; ringIdx = i - ring1Cap;
+    } else if (i < ring1Cap + ring2Cap + ring3Cap) {
+      ring = 3; ringRadius = baseRadius * 0.82; countInRing = ring3Cap; ringIdx = i - (ring1Cap + ring2Cap);
+    } else {
+      ring = 4; ringRadius = baseRadius * 1.02; countInRing = Math.max(1, n - (ring1Cap + ring2Cap + ring3Cap)); ringIdx = i - (ring1Cap + ring2Cap + ring3Cap);
+    }
+
+    const angle = (ringIdx / countInRing) * 2 * Math.PI + (ring * 0.28);
     const nx = apX + Math.cos(angle) * ringRadius;
     const ny = apY + Math.sin(angle) * ringRadius;
 
@@ -577,17 +662,41 @@ function hitTest(mx, my) {
   return null;
 }
 
-function getNodeState(d) {
-  if (!d) return { color: '#64748b', label: 'idle', r: 6.5 };
-  if (d.collision > 0.04 || d.state === 'colliding') return { color: '#f87171', label: 'collision', r: 8.5 };
-  if (d.throughput > 0.0005 || d.queue_occ > 0.02 || d.state === 'active') return { color: '#4ade80', label: 'transmitting', r: 7.5 };
+const nodeActivityMap = new Map(); // id -> { lastTx: timestamp, isCollision: boolean }
+
+function getNodeState(d, id) {
+  if (!d) return { color: '#64748b', label: 'idle', r: 6.0 };
+  if (d.isMuted || d.state === 'muted') return { color: '#475569', label: 'muted', r: 5.0 };
+
+  const devId = id !== undefined ? id : d.id;
+  const now = performance.now();
+  const act = devId !== undefined ? nodeActivityMap.get(devId) : null;
+  const timeSinceTx = act ? (now - act.lastTx) : 99999;
+
+  // 1. Collision state
+  if (d.collision > 0.04 || d.state === 'colliding' || (act && act.isCollision && timeSinceTx < 600)) {
+    return { color: '#f87171', label: 'collision', r: 8.5 };
+  }
+
+  // 2. Active transmission state (held for 1.2s for smooth visual persistence)
+  if (d.throughput > 0.0001 || d.queue_occ > 0.005 || d.state === 'active' || timeSinceTx < 1200) {
+    const pulseFactor = Math.max(0, 1 - timeSinceTx / 1200);
+    return { color: '#4ade80', label: 'transmitting', r: 7.0 + pulseFactor * 1.5 };
+  }
+
+  // 3. Active connected STA in running simulation
+  if (state.mode === 'sim' || state.mode === 'live' || state.mode === 'replay') {
+    return { color: '#22d3ee', label: 'connected', r: 6.2 };
+  }
+
   return { color: '#64748b', label: 'idle', r: 6.0 };
 }
 
 function pulseEffect(id) {
   const p = nodePx.find(x => x.id === id);
   if (p) {
-    pulseRipples.push({ x: p.x, y: p.y, r: 5, maxR: 45, color: '#f59e0b', born: performance.now() });
+    pulseRipples.push({ x: p.x, y: p.y, r: 4, maxR: 60, color: '#f59e0b', born: performance.now() });
+    pulseRipples.push({ x: p.x, y: p.y, r: 8, maxR: 85, color: '#f87171', born: performance.now() + 100 });
   }
 }
 
@@ -629,7 +738,7 @@ function drawLoop(timestamp) {
         // 3. Mesh Links & Packets
         for (const p of nodePx) {
           const d = state.devices.get(p.id);
-          const st = getNodeState(d);
+          const st = getNodeState(d, p.id);
           const isSel = state.selected === p.id;
           const isHov = state.hover === p.id;
 
@@ -639,22 +748,24 @@ function drawLoop(timestamp) {
           if (isSel) {
             ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2.0;
           } else if (isHov) {
-            ctx.strokeStyle = 'rgba(34, 211, 238, 0.6)'; ctx.lineWidth = 1.4;
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.7)'; ctx.lineWidth = 1.5;
           } else if (st.label === 'collision') {
-            ctx.strokeStyle = 'rgba(248, 113, 113, 0.28)'; ctx.lineWidth = 1.0;
+            ctx.strokeStyle = 'rgba(248, 113, 113, 0.35)'; ctx.lineWidth = 1.2;
           } else if (st.label === 'transmitting') {
-            ctx.strokeStyle = 'rgba(74, 222, 128, 0.25)'; ctx.lineWidth = 1.0;
+            ctx.strokeStyle = 'rgba(74, 222, 128, 0.35)'; ctx.lineWidth = 1.2;
+          } else if (st.label === 'connected') {
+            ctx.strokeStyle = 'rgba(34, 211, 238, 0.16)'; ctx.lineWidth = 0.8;
           } else {
-            ctx.strokeStyle = 'rgba(71, 85, 105, 0.12)'; ctx.lineWidth = 0.6;
+            ctx.strokeStyle = 'rgba(71, 85, 105, 0.12)'; ctx.lineWidth = 0.5;
           }
           ctx.stroke();
 
-          if (st.label !== 'idle' && Math.random() < 0.14) {
+          if (st.label !== 'idle' && st.label !== 'muted' && Math.random() < 0.18) {
             packets.push({
               fromX: p.x, fromY: p.y, toX: ap.x, toY: ap.y,
-              born: now, dur: 700 + Math.random() * 200,
+              born: now, dur: 600 + Math.random() * 250,
               isCollision: st.label === 'collision',
-              color: st.label === 'collision' ? '#f87171' : themeColor
+              color: st.label === 'collision' ? '#f87171' : (st.label === 'transmitting' ? '#4ade80' : themeColor)
             });
           }
         }
@@ -775,6 +886,17 @@ function renderDetail(id, snap) {
     dot.style.boxShadow = `0 0 8px ${st.color}`;
   }
 
+  const btnMute = $('btnToggleMute');
+  if (btnMute) {
+    if (d.isMuted) {
+      btnMute.textContent = '⚡ Resume Node Traffic';
+      btnMute.classList.add('muted-active');
+    } else {
+      btnMute.textContent = '💤 Force Node Idle';
+      btnMute.classList.remove('muted-active');
+    }
+  }
+
   const dGrid = $('dGrid');
   if (dGrid) {
     dGrid.innerHTML = `
@@ -782,8 +904,8 @@ function renderDetail(id, snap) {
       <div class="d-item"><label>CWmin BE</label><b>${d.cw_be ?? 31}</b></div>
       <div class="d-item"><label>AIFSN VO/BE</label><b>${d.aifsn_vo ?? 2} / ${d.aifsn_be ?? 3}</b></div>
       <div class="d-item"><label>Delivery (PDR)</label><b>${(100 * (d.delivery ?? 1.0)).toFixed(1)}%</b></div>
-      <div class="d-item"><label>Queue Buffer</label><b>${Math.round((d.queue_occ ?? 0) * 100)}%</b></div>
-      <div class="d-item"><label>Estimated Load</label><b>${(d.load_estimate ?? 0.2).toFixed(2)}</b></div>
+      <div class="d-item"><label>Queue Buffer</label><b>${d.isMuted ? 'MUTED' : Math.round((d.queue_occ ?? 0) * 100) + '%'}</b></div>
+      <div class="d-item"><label>Estimated Load</label><b>${d.isMuted ? '0.00' : (d.load_estimate ?? 0.2).toFixed(2)}</b></div>
     `;
   }
 
@@ -1114,7 +1236,7 @@ function lineChart(svg, series, opts = {}) {
   const W = svg.clientWidth || 480, H = svg.clientHeight || 120;
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
-  const pad = { l: 38, r: 10, t: 8, b: 18 };
+  const pad = { l: 38, r: 10, t: 10, b: 20 };
   
   // Clean, sort, and deduplicate all series points
   const cleanSeries = [];
@@ -1143,19 +1265,20 @@ function lineChart(svg, series, opts = {}) {
   const X = v => pad.l + (v - x0) / (x1 - x0 || 1) * (W - pad.l - pad.r);
   const Y = v => H - pad.b - (v / (y1 || 1)) * (H - pad.t - pad.b);
 
+  // Background Grid Lines & Y-axis labels
   for (let i = 0; i <= 3; i++) {
     const yv = y1 * i / 3, y = Y(yv);
-    svg.appendChild(svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, stroke: 'rgba(30,41,59,0.8)', 'stroke-width': 1 }));
+    svg.appendChild(svgEl('line', { x1: pad.l, x2: W - pad.r, y1: y, y2: y, stroke: 'rgba(30,41,59,0.7)', 'stroke-width': 1 }));
     const label = opts.logY ? Math.round(10 ** yv) : (opts.yLabel ? opts.yLabel(yv) : yv.toFixed(1));
     const t = svgEl('text', { x: pad.l - 5, y: y + 3, fill: '#64748b', 'font-size': 8.5, 'font-family': 'JetBrains Mono', 'text-anchor': 'end' });
     t.textContent = label;
     svg.appendChild(t);
   }
 
-  // Smooth cubic Bezier spline helper (Catmull-Rom → cubic Bezier control points)
-  function smoothPath(pts, mapY) {
+  // Smooth cubic Bezier spline helper with micro-offset for zero-overlap separation
+  function smoothPath(pts, mapY, offsetPx = 0) {
     if (pts.length < 2) return '';
-    const coords = pts.map(p => [X(p[0]), Y(mapY(p[1]))]);
+    const coords = pts.map(p => [X(p[0]), Y(mapY(p[1])) + offsetPx]);
     if (coords.length === 2) {
       return `M${coords[0][0].toFixed(1)},${coords[0][1].toFixed(1)}L${coords[1][0].toFixed(1)},${coords[1][1].toFixed(1)}`;
     }
@@ -1175,20 +1298,53 @@ function lineChart(svg, series, opts = {}) {
     return d;
   }
 
-  for (const s of cleanSeries) {
+  cleanSeries.forEach((s, sIdx) => {
     const pts = s.pts;
     const mapY = v => opts.logY ? Math.log10(Math.max(v, 1)) : v;
-    const d = smoothPath(pts, mapY);
+    // Apply micro-offset (±1.5px) so overlapping zero-lines remain visibly separated
+    const offsetPx = cleanSeries.length > 1 ? (sIdx - 1) * 1.6 : 0;
+    const d = smoothPath(pts, mapY, offsetPx);
+
     if (s.fill) {
-      // For the fill area, use the smooth curve then drop straight down to baseline
       const area = d + `L${X(pts[pts.length - 1][0]).toFixed(1)},${(H - pad.b).toFixed(1)}L${X(pts[0][0]).toFixed(1)},${(H - pad.b).toFixed(1)}Z`;
-      svg.appendChild(svgEl('path', { d: area, fill: s.color, 'fill-opacity': 0.1 }));
+      svg.appendChild(svgEl('path', { d: area, fill: s.color, 'fill-opacity': 0.12 }));
     }
-    svg.appendChild(svgEl('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 1.8, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+
+    const pathAttrs = {
+      d,
+      fill: 'none',
+      stroke: s.color,
+      'stroke-width': s.strokeWidth || (s.name === 'SAC' ? 2.6 : 1.9),
+      'stroke-linejoin': 'round',
+      'stroke-linecap': 'round',
+    };
+    if (s.dash) pathAttrs['stroke-dasharray'] = s.dash;
+    svg.appendChild(svgEl('path', pathAttrs));
 
     const last = pts[pts.length - 1];
-    const ly = mapY(last[1]);
-    svg.appendChild(svgEl('circle', { cx: X(last[0]), cy: Y(ly), r: 2.8, fill: s.color }));
+    const ly = Y(mapY(last[1])) + offsetPx;
+    const rDot = s.name === 'SAC' ? 3.6 : 2.6;
+    svg.appendChild(svgEl('circle', { cx: X(last[0]), cy: ly, r: rDot, fill: s.color }));
+  });
+
+  // Top-right live value HUD badges for crystal-clear visual separation
+  if (cleanSeries.length > 1) {
+    let badgeX = W - pad.r - 4;
+    for (let i = cleanSeries.length - 1; i >= 0; i--) {
+      const s = cleanSeries[i];
+      const lastVal = s.pts[s.pts.length - 1][1];
+      const valStr = opts.yLabel ? opts.yLabel(lastVal) : lastVal.toFixed(1);
+      const text = `${s.name}: ${valStr}`;
+
+      const t = svgEl('text', {
+        x: badgeX, y: pad.t + 4, fill: s.color,
+        'font-size': 9.0, 'font-weight': 700, 'font-family': 'JetBrains Mono',
+        'text-anchor': 'end'
+      });
+      t.textContent = text;
+      svg.appendChild(t);
+      badgeX -= (text.length * 6.5 + 12);
+    }
   }
 }
 

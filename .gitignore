@@ -12,5 +12,11 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Logs
+# Logs & Scratch
 *.log
+git_log.txt
+
+# Transient simulation output
+results/dash_live_*.csv
+ns-3.48/results/dash_live_*.csv
+ns-3.48/results/_tmp_*.csv
